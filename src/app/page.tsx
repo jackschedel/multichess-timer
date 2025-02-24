@@ -150,7 +150,7 @@ export default function HomePage() {
       }
 
       return currentPlayers.map((player, index) => {
-        var newTimeLeft = player.timeLeft;
+        let newTimeLeft = player.timeLeft;
         if (index === activePlayerIndex) {
           if (player.timeLeft > 0) {
             newTimeLeft = player.timeLeft + increment;
