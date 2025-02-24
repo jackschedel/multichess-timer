@@ -11,22 +11,27 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select";
+import { Switch } from "~/components/ui/switch";
+import { Label } from "~/components/ui/label";
 
 interface Player {
   id: number;
   timeLeft: number;
   isActive: boolean;
+  isOut: boolean;
 }
 
 export default function HomePage() {
   const [players, setPlayers] = React.useState<Player[]>([]);
+  const [hasStarted, setHasStarted] = React.useState(false);
+  const [playerLost, setPlayerLost] = React.useState(false);
   const [isRunning, setIsRunning] = React.useState(false);
   const [isInitialized, setIsInitialized] = React.useState(false);
   const [selectedCount, setSelectedCount] = React.useState<string>("2");
   const [timePerPlayer, setTimePerPlayer] = React.useState<number>(300);
   const [increment, setIncrement] = React.useState<number>(5);
+  const [eliminationMode, setEliminationMode] = React.useState(true);
 
-  // Ref to store the interval ID
   const intervalRef = React.useRef<number | null>(null);
 
   const initializePlayers = () => {
@@ -35,6 +40,7 @@ export default function HomePage() {
       id: index + 1,
       timeLeft: timePerPlayer,
       isActive: index === 0,
+      isOut: false,
     }));
     setPlayers(newPlayers);
     setIsInitialized(true);
@@ -42,6 +48,8 @@ export default function HomePage() {
   };
 
   const resetGame = () => {
+    setPlayerLost(false);
+    setHasStarted(false);
     setPlayers([]);
     setIsRunning(false);
     setIsInitialized(false);
@@ -55,9 +63,8 @@ export default function HomePage() {
 
       if (activePlayerIndex === -1) return currentPlayers;
 
-      // Create a new array to avoid mutating state
       const newPlayers = currentPlayers.map((player, index) => {
-        if (index === activePlayerIndex) {
+        if (index === activePlayerIndex && player.timeLeft > 0) {
           return {
             ...player,
             timeLeft: player.timeLeft - 1,
@@ -66,24 +73,19 @@ export default function HomePage() {
         return player;
       });
 
-      // Check if the active player's time has run out
       const activePlayer = newPlayers[activePlayerIndex];
       if (activePlayer && activePlayer.timeLeft <= 0) {
-        const nextPlayerIndex = (activePlayerIndex + 1) % newPlayers.length;
-        // Deactivate the current player
+        setIsRunning(false);
+        setPlayerLost(true);
         newPlayers[activePlayerIndex] = {
           ...activePlayer,
-          isActive: false,
+          isOut: eliminationMode,
         };
-        // Activate the next player
-        if (newPlayers[nextPlayerIndex]) {
-          newPlayers[nextPlayerIndex].isActive = true;
-        }
       }
 
       return newPlayers;
     });
-  }, []);
+  }, [eliminationMode]);
 
   React.useEffect(() => {
     if (isRunning) {
@@ -97,16 +99,16 @@ export default function HomePage() {
       }
     }
 
-    // Cleanup function
     return () => {
       if (intervalRef.current !== null) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
     };
-  }, [isRunning, tick]); // Include tick in dependencies
+  }, [isRunning, tick]);
 
   const formatTime = (seconds: number): string => {
+    if (seconds <= 0) return "Lost";
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = seconds % 60;
     return `${minutes.toString().padStart(2, "0")}:${remainingSeconds
@@ -115,27 +117,55 @@ export default function HomePage() {
   };
 
   const nextPlayer = () => {
+    setPlayerLost(false);
     setPlayers((currentPlayers) => {
       const activePlayerIndex = currentPlayers.findIndex(
         (player) => player.isActive,
       );
-      const nextPlayerIndex = (activePlayerIndex + 1) % currentPlayers.length;
+
+      // Find the next valid player
+      let nextPlayerIndex = (activePlayerIndex + 1) % currentPlayers.length;
+      let loopCount = 0;
+
+      // Add a check for remaining players
+      const hasRemainingPlayers = currentPlayers.some(
+        (player) =>
+          !player.isOut || player.id === currentPlayers[activePlayerIndex]?.id,
+      );
+
+      if (!hasRemainingPlayers) {
+        // If no players remain, stop the game
+        setIsRunning(false);
+        return currentPlayers;
+      }
+
+      // Find next non-eliminated player
+      while (
+        eliminationMode &&
+        currentPlayers[nextPlayerIndex]?.isOut &&
+        loopCount < currentPlayers.length
+      ) {
+        nextPlayerIndex = (nextPlayerIndex + 1) % currentPlayers.length;
+        loopCount++;
+      }
 
       return currentPlayers.map((player, index) => {
+        var newTimeLeft = player.timeLeft;
         if (index === activePlayerIndex) {
-          // Add increment to the player who just finished their turn
-          return {
-            ...player,
-            isActive: false,
-            timeLeft: player.timeLeft + increment, // Add increment here
-          };
+          if (player.timeLeft > 0) {
+            newTimeLeft = player.timeLeft + increment;
+          } else if (!eliminationMode) {
+            newTimeLeft = timePerPlayer;
+          }
         }
         return {
           ...player,
           isActive: index === nextPlayerIndex,
+          timeLeft: newTimeLeft,
         };
       });
     });
+    setIsRunning(true);
   };
 
   return (
@@ -205,6 +235,18 @@ export default function HomePage() {
                 disabled={isInitialized}
               />
             </div>
+
+            <div className="flex items-center space-x-2">
+              <Switch
+                id="elimination-mode"
+                checked={eliminationMode}
+                onCheckedChange={setEliminationMode}
+                disabled={isInitialized}
+              />
+              <Label htmlFor="elimination-mode">
+                Eliminate players when time runs out
+              </Label>
+            </div>
           </div>
 
           {!isInitialized ? (
@@ -213,21 +255,41 @@ export default function HomePage() {
             </Button>
           ) : (
             <div className="flex gap-2">
-              <Button
-                onClick={() => setIsRunning((prev) => !prev)}
-                className="w-full"
-                variant={isRunning ? "destructive" : "default"}
-              >
-                {isRunning ? "Pause" : "Play"}
-              </Button>
               {isRunning && (
+                <Button
+                  onClick={() => setIsRunning(false)}
+                  className="w-full"
+                  variant="destructive"
+                >
+                  Pause
+                </Button>
+              )}
+              {(!isRunning || !hasStarted) && !playerLost && (
+                <Button
+                  onClick={() => {
+                    setIsRunning(true);
+                    setHasStarted(true);
+                  }}
+                  className="w-full"
+                  variant="default"
+                >
+                  Play
+                </Button>
+              )}
+              {hasStarted && (
                 <Button onClick={nextPlayer} className="w-full">
                   Next Player
                 </Button>
               )}
-              <Button onClick={resetGame} className="w-full" variant="outline">
-                Reset
-              </Button>
+              {!isRunning && (
+                <Button
+                  onClick={resetGame}
+                  className="w-full"
+                  variant="outline"
+                >
+                  Reset
+                </Button>
+              )}
             </div>
           )}
         </div>
@@ -238,7 +300,7 @@ export default function HomePage() {
               key={player.id}
               className={`${
                 player.isActive ? "border-2 border-green-500" : ""
-              }`}
+              } ${player.timeLeft <= 0 ? "border-2 border-red-500" : ""}`}
             >
               <CardContent className="p-4">
                 <div className="text-center">
